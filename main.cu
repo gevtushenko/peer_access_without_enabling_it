@@ -236,6 +236,57 @@ float p2p_copy (size_t size)
   return elapsed;
 }
 
+__global__ void copy_kernel (const unsigned int n, const int * __restrict__ in, int * __restrict__ out)
+{
+  const unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
+
+  if (i < n)
+    out[i] = in[i];
+}
+
+float p2p_copy_kernel (size_t size)
+{
+  int *pointers[2];
+
+  cudaSetDevice (0);
+  cudaDeviceEnablePeerAccess (1, 0);
+  cudaMalloc (&pointers[0], size);
+
+  cudaSetDevice (1);
+  cudaDeviceEnablePeerAccess (0, 0);
+  cudaMalloc (&pointers[1], size);
+
+  cudaEvent_t begin, end;
+  cudaEventCreate (&begin);
+  cudaEventCreate (&end);
+
+  cudaEventRecord (begin);
+
+  const unsigned int n = size / sizeof (int);
+  const unsigned int block_size = 256;
+  const unsigned int blocks_count = (n + block_size - 1) / block_size;
+
+  copy_kernel<<<blocks_count, block_size>>>(n, pointers[0], pointers[1]);
+
+  cudaEventRecord (end);
+  cudaEventSynchronize (end);
+
+  float elapsed;
+  cudaEventElapsedTime (&elapsed, begin, end);
+  elapsed /= 1000;
+
+  cudaSetDevice (0);
+  cudaFree (pointers[0]);
+
+  cudaSetDevice (1);
+  cudaFree (pointers[1]);
+
+  cudaEventDestroy (end);
+  cudaEventDestroy (begin);
+
+  return elapsed;
+}
+
 float cumem_copy (size_t size)
 {
   CUdevice device;
@@ -295,12 +346,12 @@ int main ()
   if (!attribute_val_0 || !attribute_val_1)
     std::cout << "One of the GPUs doesn't support virtual address management\n";
 
-  for (size_t size: { 512, 2048, 8192, 32768, 131072, 524288, 2097152, 8388608, 33554432, 134217728 })
+  for (size_t size: { 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 524288, 2097152, 8388608, 33554432, 134217728 })
     {
       float elapsed {};
       const unsigned int max_iterations = 30;
       for (unsigned int _ = 0; _ < max_iterations; _++)
-        elapsed += p2p_copy (size);
+        elapsed += p2p_copy_kernel (size);
       print_bw (size, elapsed / max_iterations);
     }
 
